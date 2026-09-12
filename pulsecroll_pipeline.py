@@ -14,28 +14,36 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
 genai_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
-# Debreceni kulturális és programoldalak
+# Javított és tesztelt debreceni források
 TARGET_URLS = [
     {"name": "Debrecen.hu Programok", "url": "https://www.debrecen.hu/hu/debreceni/programok"},
-    {"name": "Kölcsey Központ és Főnix Rendezvények", "url": "https://www.fonixcsarnok.hu/esemenyek"},
+    {"name": "Főnix Rendezvények", "url": "https://fonixdebrecen.hu/esemenyek/"},
     {"name": "Csokonai Színház Műsor", "url": "https://csokonaiszinhaz.hu/musor/"}
 ]
 
+# Valódi böngészőt szimuláló fejlécek a blokkolás elkerülésére
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept-Language": "hu-HU,hu;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Cache-Control": "no-cache"
 }
 
 def fetch_page_text(url):
     try:
-        response = requests.get(url, headers=HEADERS, timeout=15)
+        session = requests.Session()
+        response = session.get(url, headers=HEADERS, timeout=20, allow_redirects=True)
         response.encoding = response.apparent_encoding or 'utf-8'
+        
         if response.status_code == 200:
             soup = BeautifulSoup(response.text, 'html.parser')
-            for tag in soup(['script', 'style', 'nav', 'footer', 'header', 'svg', 'iframe']):
+            for tag in soup(['script', 'style', 'nav', 'footer', 'header', 'svg', 'iframe', 'noscript']):
                 tag.decompose()
             text = soup.get_text(separator=' ')
             clean_text = re.sub(r'\s+', ' ', text).strip()
-            return clean_text[:20000]
+            return clean_text[:25000]
+        else:
+            print(f" [HIBA] HTTP Status: {response.status_code} ({url})")
     except Exception as e:
         print(f" [HIBA] Nem sikerült letölteni az oldalt ({url}): {e}")
     return None
@@ -79,7 +87,7 @@ def extract_events_with_gemini(raw_text, source_name, source_url):
         if "```json" in text_resp:
             text_resp = text_resp.split("```json")[1].split("```")[0].strip()
         elif "```" in text_resp:
-            text_resp = text_resp.split("```")[1].split("```")[0].strip()
+            text_resp = text_resp.split("```json")[1].split("```")[0].strip()
 
         parsed = json.loads(text_resp)
         if isinstance(parsed, list):
