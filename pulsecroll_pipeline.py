@@ -2,6 +2,8 @@ import os
 import json
 import re
 from datetime import datetime
+import requests
+from bs4 import BeautifulSoup
 from google import genai
 from supabase import create_client, Client
 
@@ -12,34 +14,60 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
 genai_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
-def clean_html(raw_html):
-    if not raw_html:
-        return ""
-    text = re.sub(r'<(script|style|header|footer|nav)[^>]*>.*?</\1>', ' ', str(raw_html), flags=re.DOTALL | re.IGNORECASE)
-    text = re.sub(r'<[^>]+>', ' ', text)
-    return re.sub(r'\s+', ' ', text).strip()
+# Debreceni kulturális és programoldalak
+TARGET_URLS = [
+    {"name": "Debrecen.hu Programok", "url": "https://www.debrecen.hu/hu/debreceni/programok"},
+    {"name": "Kölcsey Központ és Főnix Rendezvények", "url": "https://www.fonixcsarnok.hu/esemenyek"},
+    {"name": "Csokonai Színház Műsor", "url": "https://csokonaiszinhaz.hu/musor/"}
+]
 
-def main():
-    if not genai_client or not supabase:
-        print("---> [HIBA] Hiányzó API kulcsok vagy adatbázis beállítások.")
-        return
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+}
+
+def fetch_page_text(url):
+    try:
+        response = requests.get(url, headers=HEADERS, timeout=15)
+        response.encoding = response.apparent_encoding or 'utf-8'
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.text, 'html.parser')
+            for tag in soup(['script', 'style', 'nav', 'footer', 'header', 'svg', 'iframe']):
+                tag.decompose()
+            text = soup.get_text(separator=' ')
+            clean_text = re.sub(r'\s+', ' ', text).strip()
+            return clean_text[:20000]
+    except Exception as e:
+        print(f" [HIBA] Nem sikerült letölteni az oldalt ({url}): {e}")
+    return None
+
+def extract_events_with_gemini(raw_text, source_name, source_url):
+    if not genai_client or not raw_text:
+        return []
 
     today_str = datetime.now().strftime("%Y-%m-%d")
-    print(f"---> PulseScroll automatikus adatgyűjtés indítása: {today_str}")
 
     prompt = f"""
-    Te egy debreceni kulturális újságíró AI vagy.
-    Generálj 3 aktuális, valósághű debreceni programajánlót a mai napra ({today_str}) JSON tömb formátumban.
+    Te egy debreceni kulturális újságíró AI vagy. 
+    A kapott weboldal szöveges tartalmából vond ki a debreceni eseményeket és műsorokat JSON tömb formátumban.
 
-    KÖTELEZŐ MEZŐK:
-    1. "cim": Az esemény neve.
-    2. "datum": YYYY-MM-DD formátum (pl. "{today_str}").
-    3. "kezdet_ido": YYYY-MM-DD HH:MM:SS formátum (pl. "{today_str} 19:00:00").
-    4. "helyszin": Konkrét debreceni helyszín (pl. "Csokonai Nemzeti Színház", "Kölcsey Központ", "Nagyerdei Víztorony").
-    5. "kategoria": "Színház", "Koncert", "Fesztivál", "Gasztro", "Családi" vagy "Előadás".
-    6. "ajanlo": 2-3 mondatos hangulatos kedvcsináló.
-    7. "url": "https://debrecen.hu"
-    8. "leiras": Rövid leírás.
+    Forrás neve: {source_name}
+    Alapértelmezett URL: {source_url}
+    Mai dátum referenciának: {today_str}
+
+    KÖTELEZŐ MEZŐK MIDEN ESEMÉNYNÉL:
+    1. "cim": Az esemény vagy előadás pontos neve.
+    2. "datum": YYYY-MM-DD formátumú dátum.
+    3. "kezdet_ido": YYYY-MM-DD HH:MM:SS formátum (pl. "2026-09-15 19:00:00"). Ha az óra hiányzik, legyen "19:00:00".
+    4. "helyszin": A konkrét debreceni helyszín/intézmény neve (pl. "Csokonai Nemzeti Színház", "Kölcsey Központ", "Nagyerdei Víztorony", "Főnix Aréna", "Nagyerdei Szabadtéri Színpad"). SOHASE csak "Debrecen"!
+    5. "kategoria": Szigorúan a következők egyike: "Színház", "Koncert", "Fesztivál", "Gasztro", "Vásár", "Családi", "Sport", "Kiállítás", "Előadás", "Buli".
+    6. "ajanlo": 2-3 mondatos, kedvcsináló, stílusos összefoglaló magyarul.
+    7. "url": Az esemény pontos webcíme (ha megtalálható), egyébként a forrás URL: {source_url}.
+    8. "leiras": Tömör leírás a programról.
+
+    Visszatérési formátum: KIZÁRÓLAG egy érvényes JSON tömb, egyéb magyarázó szöveg nélkül!
+
+    Weboldal szövege:
+    {raw_text}
     """
 
     try:
@@ -53,8 +81,41 @@ def main():
         elif "```" in text_resp:
             text_resp = text_resp.split("```")[1].split("```")[0].strip()
 
-        events = json.loads(text_resp)
-        print(f"---> {len(events)} esemény sikeresen feldolgozva a Gemini AI által.")
+        parsed = json.loads(text_resp)
+        if isinstance(parsed, list):
+            return parsed
+        elif isinstance(parsed, dict) and "events" in parsed:
+            return parsed["events"]
+    except Exception as e:
+        print(f" [HIBA] Gemini AI feldolgozási hiba ({source_name}): {e}")
+    return []
+
+def main():
+    if not genai_client or not supabase:
+        print("---> [HIBA] Hiányzó API kulcsok vagy adatbázis beállítások.")
+        return
+
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    print(f"---> PulseScroll ÉLŐ debreceni adatgyűjtés indítása: {today_str}\n")
+
+    total_saved = 0
+
+    for target in TARGET_URLS:
+        print(f"--> Letöltés: {target['name']} ({target['url']})...")
+        page_text = fetch_page_text(target['url'])
+
+        if not page_text:
+            print(f"    Sikertelen letöltés, ugrás a következőre.\n")
+            continue
+
+        print(f"    Szöveg letöltve ({len(page_text)} kar.), elemzés Gemini 2.0 Flash-el...")
+        events = extract_events_with_gemini(page_text, target['name'], target['url'])
+
+        if not events:
+            print(f"    Nem sikerült eseményeket kinyerni.\n")
+            continue
+
+        print(f"    {len(events)} esemény azonosítva! Mentés a Supabase adatbázisba...")
 
         for event in events:
             raw_date = str(event.get("datum") or today_str).strip()
@@ -62,17 +123,23 @@ def main():
                 "cim": event.get("cim"),
                 "datum": raw_date,
                 "kezdet_ido": str(event.get("kezdet_ido") or f"{raw_date} 19:00:00").strip(),
-                "helyszin": str(event.get("helyszin") or "Csokonai Nemzeti Színház").strip(),
-                "kategoria": str(event.get("kategoria") or "Színház").strip(),
+                "helyszin": str(event.get("helyszin") or "Debrecen").strip(),
+                "kategoria": str(event.get("kategoria") or "Előadás").strip(),
                 "leiras": event.get("leiras") or "",
                 "ajanlo": event.get("ajanlo") or "",
-                "url": event.get("url") or "",
+                "url": event.get("url") or target['url'],
             }
-            supabase.table("esemenyek").insert(payload).execute()
-            print(f" [SIKER] Mentve az adatbázisba: {payload['cim']}")
 
-    except Exception as e:
-        print(f"---> [HIBA] A folyamat során hiba történt: {e}")
+            try:
+                supabase.table("esemenyek").insert(payload).execute()
+                print(f"      [SIKER] Mentve: {payload['cim']} | {payload['helyszin']} | {payload['datum']}")
+                total_saved += 1
+            except Exception as e:
+                print(f"      [HIBA] MENTÉSNÉL ({payload.get('cim')}): {e}")
+
+        print("")
+
+    print(f"---> ADATGYŰJTÉS BEFEJEZVE. Összesen {total_saved} új élő esemény elmentve a Supabase-be.")
 
 if __name__ == "__main__":
     main()
