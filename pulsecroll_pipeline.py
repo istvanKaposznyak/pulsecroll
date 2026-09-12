@@ -8,12 +8,12 @@ from supabase import create_client, Client
 # ==============================================================================
 # 1. BEÁLLÍTÁSOK ÉS KÖRNYEZETI VÁLTOZÓK (LOKÁLIS + GITHUB ACTIONS)
 # ==============================================================================
-SUPABASE_URL = os.environ.get("SUPABASE_URL") or "https://lhoozpsyhwmoqtmgxipe.supabase.co"
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY") or "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imxob296cHN5aHdtb3F0bWd4aXBlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg3MDAwNjUsImV4cCI6MjEwNDI3NjA2NX0.sWap7Ka6igDGHK6nzyC1C46TTRIhDHA7298ME1hKq8o"
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") or "AQ.Ab8RN6IAFZrM6bBIgukmFbbMCfArlPtYlWNwcEwk1qcXtm3LYg"
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://lhoozpsyhwmoqtmgxipe.supabase.co")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imxob296cHN5aHdtb3F0bWd4aXBlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg3MDAwNjUsImV4cCI6MjEwNDI3NjA2NX0.sWap7Ka6igDGHK6nzyC1C46TTRIhDHA7298ME1hKq8o")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-genai_client = genai.Client(api_key=GEMINI_API_KEY)
+genai_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 
 def clean_html(raw_html):
@@ -25,6 +25,10 @@ def clean_html(raw_html):
 
 
 def process_and_save_event_list(raw_data=None, raw_text=None, **kwargs):
+    if not genai_client:
+        print("---> [INFO] Nincs GEMINI_API_KEY környezeti változó beállítva.")
+        return
+
     content = raw_text if raw_text is not None else raw_data
     today = datetime.now()
     today_str = today.strftime("%Y-%m-%d")
