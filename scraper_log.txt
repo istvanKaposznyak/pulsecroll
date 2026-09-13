@@ -16,3 +16,4 @@ Traceback (most recent call last):
   File "C:\Users\Dell 7490\OneDrive\Documents\pulsecroll\pulsecroll_pipeline.py", line 2
     response = None
 IndentationError: unexpected indent
+^C
