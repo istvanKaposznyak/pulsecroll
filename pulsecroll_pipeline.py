@@ -2,13 +2,22 @@ import os
 import json
 import re
 from datetime import datetime, timedelta
+from pathlib import Path
 import requests
 from bs4 import BeautifulSoup
 from google import genai
 from supabase import create_client, Client
+from dotenv import load_dotenv
 
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
+# 1. Környezeti változók (.env) automatikus betöltése a főmappából vagy a frontend mappából
+load_dotenv()
+frontend_env = Path(__file__).parent / "frontend" / ".env"
+if frontend_env.exists():
+    load_dotenv(dotenv_path=frontend_env)
+
+# 2. Változók beolvasása (a VITE_ előtagú Supabase változókra is felkészítve)
+SUPABASE_URL = os.environ.get("SUPABASE_URL") or os.environ.get("VITE_SUPABASE_URL", "")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY") or os.environ.get("VITE_SUPABASE_ANON_KEY", "")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
